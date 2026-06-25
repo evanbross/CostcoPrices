@@ -1,0 +1,18 @@
+I want to create an app that keeps track of prices at Costco.
+My receipts are available on line from the costco.com website and that requires a log in and manual navigation.
+Maybe we can use a Tampermonkey script or even a browser plugin to capture the webpage data.
+Another option initially is for me to do a screen capture and provide you with an image file.
+When a new receipt is added and inserted or matched to existing database entries I want to be able to get a report of what items are new and which ones previously existed and if the prices changed.
+Initially the data can be stored in sqlite for simplicity.
+Each line has an optional letter, an item code number, a description, the price, and a single character which seems to be a sales tax type.
+The final character a 3 seems to mean grocery, a Y seems to be a prepared food product.
+Sometimes the item description will be a forward slash followed by an item code, this seems to be a coupon or discount.
+In the item database there should be a column for a human friendly description. For example, "PRONAMEL TP" is "Sensodyne Pronamel Toothpaste".
+Keep track of price over time, do not just store a single price in the item record, have a second table that has a foreign key to the item as well as the shopping date and the price paid.
+The UI should have an easy way to manually edit the 'friendly' item name and update price.
+Some items will be priced by weight, such as meats or fish.
+I want a nice, modern look & feel with costco/kirkland colors and logo. Maybe use your UI designer?
+Be sure to create a claude.md file which references the .md files in ../Dev-Standards that apply to this project.
+Backend code should be written in python. Frontend is Javascript with React. Or maybe typescript with React.
+Use UV and Vite. Have the main app automatically recompile the frontend code if necessary.
+Do you have any questions?
