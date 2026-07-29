@@ -6,6 +6,7 @@
 @../Dev-Standards/FASTAPI_STANDARDS.md
 @../Dev-Standards/TESTING_STANDARDS.md
 @../Dev-Standards/INFRASTRUCTURE_STANDARDS.md
+@../Dev-Standards/WINDOWS_STANDARDS.md
 
 ## SQLAlchemy / Python Datetime
 

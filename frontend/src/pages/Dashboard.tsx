@@ -27,8 +27,9 @@ export default function Dashboard() {
       </div>
 
       {/* Stats */}
+      {/* ai: claude-sonnet-5 | 2026-07-20 */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="card p-5 flex items-center gap-4">
+        <Link to="/items" className="card p-5 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="w-12 h-12 rounded-full bg-costco-red/10 flex items-center justify-center shrink-0">
             <Package className="w-6 h-6 text-costco-red" />
           </div>
@@ -36,8 +37,8 @@ export default function Dashboard() {
             <p className="text-3xl font-bold text-costco-blue">{items.length}</p>
             <p className="text-sm text-gray-500">Tracked items</p>
           </div>
-        </div>
-        <div className="card p-5 flex items-center gap-4">
+        </Link>
+        <Link to="/receipts" className="card p-5 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="w-12 h-12 rounded-full bg-costco-blue/10 flex items-center justify-center shrink-0">
             <Receipt className="w-6 h-6 text-costco-blue" />
           </div>
@@ -45,7 +46,7 @@ export default function Dashboard() {
             <p className="text-3xl font-bold text-costco-blue">{receipts.length}</p>
             <p className="text-sm text-gray-500">Receipts imported</p>
           </div>
-        </div>
+        </Link>
         <div className="card p-5 flex items-center gap-4">
           <div className="w-12 h-12 rounded-full bg-costco-gold/10 flex items-center justify-center shrink-0">
             <TrendingUp className="w-6 h-6 text-costco-gold" />

@@ -61,6 +61,18 @@ def confirm_receipt(
     # Build a lookup map for coupon resolution after processing all regular lines
     item_code_to_id: dict[str, int] = {}
 
+    # ai: claude-sonnet-5 | 2026-07-20
+    # Some coupon lines reference the discounted item by description text (e.g. "/KS KCUPS")
+    # instead of its numeric item_code, so item_code_to_id can't resolve them. Fall back to
+    # whichever non-coupon line immediately precedes the coupon in original receipt order.
+    fallback_code_by_index: dict[int, str | None] = {}
+    last_item_code: str | None = None
+    for idx, line in enumerate(lines):
+        if line.is_coupon:
+            fallback_code_by_index[idx] = last_item_code
+        else:
+            last_item_code = line.item_code
+
     for line in lines:
         if line.is_coupon:
             continue  # process coupons in second pass
@@ -124,7 +136,7 @@ def confirm_receipt(
             unchanged.append(report_item)
 
     # Second pass: coupons
-    for line in lines:
+    for idx, line in enumerate(lines):
         if not line.is_coupon:
             continue
 
@@ -146,6 +158,10 @@ def confirm_receipt(
             if line.coupon_for_code
             else None
         )
+        if coupon_for_id is None:
+            fallback_code = fallback_code_by_index.get(idx)
+            if fallback_code:
+                coupon_for_id = item_code_to_id.get(fallback_code)
 
         # Auto-set friendly_name on new coupon items (don't overwrite if already set)
         if coupon_item.friendly_name is None and coupon_for_id is not None:

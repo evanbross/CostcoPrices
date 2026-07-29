@@ -11,6 +11,7 @@ from app.database.schemas import OcrResponse, ParsedLine
 
 logger = logging.getLogger(__name__)
 
+# ai: claude-sonnet-5 | 2026-07-20 (added Quantity-multiplier lines section below)
 _SYSTEM_PROMPT = """\
 You are a Costco receipt parser. Extract the receipt header info and every line item.
 
@@ -25,6 +26,16 @@ Rules:
 - Ignore page headers and footers: repeated store banners, page numbers, timestamps, \
 "Member Since", "Member #", and any decorative separators that are not line items
 - line_prefix: the optional single letter before the item code (if present), else null
+
+Quantity-multiplier lines:
+  Some items are preceded by their own line in the form "<qty> @ <unit_price>", e.g.:
+    4 @ 14.99
+    106173  CHKN SAUSAGE      59.96  E
+  This means 4 units were bought at $14.99 each, and the item line's printed price (59.96) is the
+  extended total (qty × unit_price), not the per-unit price. When you see this pattern:
+  - Do NOT emit "<qty> @ <unit_price>" as its own line item — it is not a separate purchase.
+  - For the item line that follows it, set `price` to the unit price after "@" (14.99 above),
+    never the extended total printed on the item's own line (59.96 above).
 
 Coupon lines:
   A coupon line has its OWN item code followed by a description that starts with a forward slash \
