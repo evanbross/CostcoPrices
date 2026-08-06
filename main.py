@@ -7,7 +7,6 @@ Usage:
   python main.py --dev    — Vite :5173 + uvicorn :8000 with hot-reload, same Caddy URL
 """
 import argparse
-import json
 import os
 import platform
 import shutil
@@ -16,8 +15,6 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -64,9 +61,16 @@ def _parse_env() -> dict[str, str]:
 
 
 _ENV = _parse_env()
-_CADDY_ADMIN_URLS = _ENV.get("CADDY_ADMIN_URLS", "http://localhost:2019")
-_CADDY_ADMIN_URL_LIST = [u.strip() for u in _CADDY_ADMIN_URLS.split(",") if u.strip()]
 _CADDY_APP_NAME = _ENV.get("CADDY_APP_NAME", "costcoprices")
+
+# Shared dev Caddy registration client — lives in the sibling ../infra repo so
+# admin-API port discovery is centralized instead of hardcoded per project.
+# ai: claude-sonnet-5 | 2026-08-06
+sys.path.insert(0, str(ROOT.parent / "infra"))
+try:
+    import caddy_registry as _caddy_registry
+except ImportError:
+    _caddy_registry = None
 
 
 # ── process helpers ───────────────────────────────────────────────────────────
@@ -168,54 +172,36 @@ def _wait_for_port(port: int, timeout: int = 30) -> bool:
 
 
 # ── Caddy helpers ─────────────────────────────────────────────────────────────
+# ai: claude-sonnet-5 | 2026-08-06
 
-def _caddy_request(method: str, path: str, body: object | None = None) -> bool:
-    """Try each Caddy admin URL in order; return True on the first success."""
-    data = json.dumps(body).encode() if body is not None else None
-    for base_url in _CADDY_ADMIN_URL_LIST:
-        try:
-            req = urllib.request.Request(
-                f"{base_url}{path}",
-                data=data,
-                headers={"Content-Type": "application/json"} if data else {},
-                method=method,
-            )
-            urllib.request.urlopen(req, timeout=3)
-            return True
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
-            continue
-    return False
-
-
-def _caddy_delete_route(route_id: str) -> None:
-    _caddy_request("DELETE", f"/id/{route_id}")
+_CADDY_UNREACHABLE_MSG = (
+    "[main] Caddy not reachable — {fallback}\n"
+    "       Start the shared infra stack: cd ../infra && docker-compose up -d"
+)
 
 
 def _caddy_register_prod(backend_port: int) -> None:
     """Production: single route — all traffic to FastAPI (serves API + static files)."""
-    _caddy_delete_route(f"app-{_CADDY_APP_NAME}-api")
-    _caddy_delete_route(f"app-{_CADDY_APP_NAME}-frontend")
-    _caddy_delete_route(f"app-{_CADDY_APP_NAME}-all")
+    if _caddy_registry is None:
+        print(_CADDY_UNREACHABLE_MSG.format(fallback="direct access only."))
+        return
 
-    route = {
-        "@id": f"app-{_CADDY_APP_NAME}-all",
-        "match": [{"host": [f"{_CADDY_APP_NAME}.localhost"]}],
-        "handle": [
-            {"handler": "reverse_proxy", "upstreams": [{"dial": f"host.docker.internal:{backend_port}"}]},
-        ],
-    }
-    ok = _caddy_request("POST", "/config/apps/http/servers/dev/routes", route)
+    _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-api")
+    _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-frontend")
+    ok = _caddy_registry.register(_CADDY_APP_NAME, backend_port)
     if ok:
         print(f"[main] Caddy: http://{_CADDY_APP_NAME}.localhost → :{backend_port}")
     else:
-        print("[main] Caddy not reachable — direct access only.")
+        print(_CADDY_UNREACHABLE_MSG.format(fallback="direct access only."))
 
 
 def _caddy_register_dev(backend_port: int, frontend_port: int) -> None:
     """Dev: /api/* → uvicorn, /* → Vite. No prefix stripping — backend owns the /api prefix."""
-    _caddy_delete_route(f"app-{_CADDY_APP_NAME}-api")
-    _caddy_delete_route(f"app-{_CADDY_APP_NAME}-frontend")
-    _caddy_delete_route(f"app-{_CADDY_APP_NAME}-all")
+    if _caddy_registry is None:
+        print(_CADDY_UNREACHABLE_MSG.format(fallback="use direct ports instead."))
+        return
+
+    _caddy_registry.deregister(_CADDY_APP_NAME)
 
     routes = [
         {
@@ -233,17 +219,20 @@ def _caddy_register_dev(backend_port: int, frontend_port: int) -> None:
             ],
         },
     ]
-    ok = all(_caddy_request("POST", "/config/apps/http/servers/dev/routes", r) for r in routes)
+    ok = all(_caddy_registry.register_route(r) for r in routes)
     if ok:
         print(f"[main] Caddy: http://{_CADDY_APP_NAME}.localhost  "
               f"(api→:{backend_port}, frontend→:{frontend_port})")
     else:
-        print("[main] Caddy not reachable — use direct ports instead.")
+        print(_CADDY_UNREACHABLE_MSG.format(fallback="use direct ports instead."))
 
 
 def _caddy_deregister() -> None:
-    for suffix in ("all", "api", "frontend"):
-        _caddy_delete_route(f"app-{_CADDY_APP_NAME}-{suffix}")
+    if _caddy_registry is None:
+        return
+    _caddy_registry.deregister(_CADDY_APP_NAME)
+    _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-api")
+    _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-frontend")
 
 
 # ── startup modes ─────────────────────────────────────────────────────────────
