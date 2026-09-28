@@ -1,7 +1,6 @@
 # ai: claude-sonnet-4-6 | 2026-06-18
 import logging
 from datetime import date
-from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,23 +12,9 @@ from app.database.schemas import (
     PriceChange,
 )
 from app.models.models import Item, PriceHistory, Receipt
+from app.services.pricing import price_before_receipt
 
 logger = logging.getLogger(__name__)
-
-
-def _latest_price(db: Session, item_id: int) -> Decimal | None:
-    """Return the most recent non-coupon price for an item, or None."""
-    row = (
-        db.execute(
-            select(PriceHistory.price)
-            .where(PriceHistory.item_id == item_id, PriceHistory.is_coupon.is_(False))
-            .order_by(PriceHistory.created_at.desc())
-            .limit(1)
-        )
-        .scalars()
-        .first()
-    )
-    return row
 
 
 def confirm_receipt(
@@ -100,7 +85,7 @@ def confirm_receipt(
 
         item_code_to_id[line.item_code] = item.id
 
-        old_price = None if is_new else _latest_price(db, item.id)
+        old_price = None if is_new else price_before_receipt(db, item.id, receipt)  # ai: claude-opus-5-5 | 2026-09-28
 
         ph = PriceHistory(
             item_id=item.id,
@@ -118,9 +103,13 @@ def confirm_receipt(
             price=line.price,
         )
 
-        if is_new:
+        # ai: claude-opus-5-5 | 2026-09-28
+        # old_price is None also for a known item whose only purchases are *later* than
+        # this receipt (an older receipt imported late) — it's this item's first purchase,
+        # so report it as new, matching routes/reports.py.
+        if is_new or old_price is None:
             new_items.append(report_item)
-        elif old_price is not None and old_price != line.price:
+        elif old_price != line.price:
             price_changes.append(
                 PriceChange(
                     item_id=item.id,

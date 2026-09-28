@@ -16,28 +16,12 @@ from app.database.schemas import (
     ShoppingListRename,
     ShoppingListSummary,
 )
-from app.models.models import Item, PriceHistory, ShoppingList, ShoppingListItem
+from app.models.models import Item, ShoppingList, ShoppingListItem
+from app.services.pricing import LatestPurchase, latest_purchases
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/shopping-lists", tags=["shopping-lists"])
-
-
-def _latest_prices(db: Session, item: Item) -> tuple[Decimal | None, Decimal | None]:
-    """Return (latest_price, latest_price_per_lb) for an item."""
-    ph = (
-        db.execute(
-            select(PriceHistory)
-            .where(PriceHistory.item_id == item.id, PriceHistory.is_coupon.is_(False))
-            .order_by(PriceHistory.created_at.desc())
-            .limit(1)
-        )
-        .scalars()
-        .first()
-    )
-    if ph is None:
-        return None, None
-    return ph.price, ph.price_per_lb
 
 
 def _estimated_cost(
@@ -55,9 +39,11 @@ def _estimated_cost(
     return None
 
 
-def _build_item_out(sli: ShoppingListItem, db: Session) -> ShoppingListItemOut:
+# ai: claude-opus-5-5 | 2026-09-28
+def _build_item_out(sli: ShoppingListItem, latest: LatestPurchase | None) -> ShoppingListItemOut:
     item = sli.item
-    latest_price, latest_price_per_lb = _latest_prices(db, item)
+    latest_price = latest.price if latest else None
+    latest_price_per_lb = latest.price_per_lb if latest else None
     cost = _estimated_cost(sli.quantity, item.is_by_weight, latest_price, latest_price_per_lb)
     return ShoppingListItemOut(
         id=sli.id,
@@ -74,8 +60,15 @@ def _build_item_out(sli: ShoppingListItem, db: Session) -> ShoppingListItemOut:
     )
 
 
+# ai: claude-opus-5-5 | 2026-09-28
+def _build_items_out(slis: list[ShoppingListItem], db: Session) -> list[ShoppingListItemOut]:
+    """Build list entries with prices fetched in one query for all of them."""
+    latest = latest_purchases(db, [sli.item_id for sli in slis])
+    return [_build_item_out(sli, latest.get(sli.item_id)) for sli in slis]
+
+
 def _build_list_out(sl: ShoppingList, db: Session) -> ShoppingListOut:
-    items_out = [_build_item_out(sli, db) for sli in sl.items]
+    items_out = _build_items_out(sl.items, db)  # ai: claude-opus-5-5 | 2026-09-28
     costs = [i.estimated_cost for i in items_out if i.estimated_cost is not None]
     total = sum(costs, Decimal("0")).quantize(Decimal("0.01")) if costs else None
     return ShoppingListOut(
@@ -96,7 +89,7 @@ async def list_shopping_lists(db: Session = Depends(get_db)) -> list[ShoppingLis
 
     result = []
     for sl in lists:
-        items_out = [_build_item_out(sli, db) for sli in sl.items]
+        items_out = _build_items_out(sl.items, db)  # ai: claude-opus-5-5 | 2026-09-28
         costs = [i.estimated_cost for i in items_out if i.estimated_cost is not None]
         total = sum(costs, Decimal("0")).quantize(Decimal("0.01")) if costs else None
         result.append(ShoppingListSummary(
@@ -172,7 +165,7 @@ async def add_item(
     db.add(sli)
     db.commit()
     db.refresh(sli)
-    return _build_item_out(sli, db)
+    return _build_items_out([sli], db)[0]  # ai: claude-opus-5-5 | 2026-09-28
 
 
 @router.patch("/{list_id}/items/{entry_id}", response_model=ShoppingListItemOut)
@@ -193,7 +186,7 @@ async def update_item(
         sli.note = payload.note or None
     db.commit()
     db.refresh(sli)
-    return _build_item_out(sli, db)
+    return _build_items_out([sli], db)[0]  # ai: claude-opus-5-5 | 2026-09-28
 
 
 @router.delete("/{list_id}/items/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)

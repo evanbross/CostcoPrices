@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.database.schemas import ImportReport, ImportReportItem, PriceChange
 from app.models.models import Item, PriceHistory, Receipt
+from app.services.pricing import price_before_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -54,21 +55,10 @@ async def receipt_import_report(
             coupons.append(report_item)
             continue
 
-        # Find the previous price for this item (the row just before this receipt)
-        prev = (
-            db.execute(
-                select(PriceHistory.price)
-                .where(
-                    PriceHistory.item_id == item.id,
-                    PriceHistory.is_coupon.is_(False),
-                    PriceHistory.receipt_id != receipt_id,
-                )
-                .order_by(PriceHistory.created_at.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
+        # ai: claude-opus-5-5 | 2026-09-28
+        # Compare against the purchase before this receipt's shopping date, not the
+        # last-imported one (which can be a later trip if receipts arrive out of order).
+        prev = price_before_receipt(db, item.id, receipt)
 
         if prev is None:
             new_items.append(report_item)
