@@ -18,7 +18,9 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -26,15 +28,15 @@ FRONTEND_DIR = ROOT / "frontend"
 DIST_DIR = FRONTEND_DIR / "dist"
 BACKEND_DIR = ROOT / "backend"
 
-# Always use the backend venv's Python so all app deps (uvicorn, etc.) are available.
-_IS_WINDOWS = platform.system() == "Windows"
-
 # ai: claude-opus-5-5 | 2026-09-28
 # Status lines use non-ASCII (→, …). When stdout is redirected to a file or pipe on
 # Windows, Python falls back to cp1252, which can't encode →, and the resulting
 # UnicodeEncodeError kills the launcher without running _shutdown (orphaning uvicorn).
 sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+
+# Always use the backend venv's Python so all app deps (uvicorn, etc.) are available.
+_IS_WINDOWS = platform.system() == "Windows"
 _BACKEND_PYTHON = (
     BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
     if _IS_WINDOWS
@@ -255,12 +257,52 @@ def _caddy_register_dev(backend_port: int, frontend_port: int) -> None:
         print(_CADDY_UNREACHABLE_MSG.format(fallback="use direct ports instead."))
 
 
+# ai: claude-opus-5-5 | 2026-09-28
 def _caddy_deregister() -> None:
+    _caddy_reconcile_stop.set()
     if _caddy_registry is None:
         return
-    _caddy_registry.deregister(_CADDY_APP_NAME)
-    _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-api")
-    _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-frontend")
+    # Taking the lock waits out any in-flight re-registration, so it can't re-add a
+    # route after we've removed it.
+    with _caddy_lock:
+        _caddy_registry.deregister(_CADDY_APP_NAME)
+        _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-api")
+        _caddy_registry.delete_route(f"app-{_CADDY_APP_NAME}-frontend")
+
+
+# ai: claude-opus-5-5 | 2026-09-28
+_CADDY_RECONCILE_INTERVAL_SECONDS = 120
+_caddy_reconcile_stop = threading.Event()
+# Reentrant: _shutdown runs as a signal handler on the main thread and may interrupt
+# the main thread's own initial registration while it holds this lock.
+_caddy_lock = threading.RLock()
+
+
+def _start_caddy_reconciler(route_ids: list[str], register: Callable[[], None]) -> None:
+    """Background loop: re-register our Caddy routes if they disappear.
+
+    Caddy holds routes in memory only, so restarting the Caddy container
+    independently of this app (Docker Desktop restart, infra config reload)
+    silently drops them and costco.localhost starts returning errors while this
+    process keeps running unaware. Caddy has no restart webhook to push that
+    event to us, so this polls at a slow, minutes-scale interval as a fallback
+    safety net. It also covers Caddy being down when the app started.
+    """
+    if _caddy_registry is None:
+        return
+    registry = _caddy_registry
+
+    def _loop() -> None:
+        while not _caddy_reconcile_stop.wait(_CADDY_RECONCILE_INTERVAL_SECONDS):
+            with _caddy_lock:
+                if _caddy_reconcile_stop.is_set():
+                    return
+                if all(registry.route_registered(r) for r in route_ids):
+                    continue
+                print(f"[main] Caddy: route for {_CADDY_APP_NAME}.localhost is missing — re-registering")
+                register()
+
+    threading.Thread(target=_loop, name="caddy-reconcile", daemon=True).start()
 
 
 # ── startup modes ─────────────────────────────────────────────────────────────
@@ -289,7 +331,10 @@ def _start_prod() -> None:
         print("[main] ERROR: Backend did not start in time.", file=sys.stderr)
         _shutdown(0, None)
 
-    _caddy_register_prod(port)
+    # ai: claude-opus-5-5 | 2026-09-28
+    with _caddy_lock:
+        _caddy_register_prod(port)
+    _start_caddy_reconciler([f"app-{_CADDY_APP_NAME}"], lambda: _caddy_register_prod(port))
     print(f"[main] App ready.")
     print(f"       http://{_CADDY_APP_NAME}.localhost")
     print(f"       http://localhost:{port}  (direct)")
@@ -337,7 +382,13 @@ def _start_dev() -> None:
         print("[main] ERROR: Vite did not start in time.", file=sys.stderr)
         _shutdown(0, None)
 
-    _caddy_register_dev(backend_port, frontend_port)
+    # ai: claude-opus-5-5 | 2026-09-28
+    with _caddy_lock:
+        _caddy_register_dev(backend_port, frontend_port)
+    _start_caddy_reconciler(
+        [f"app-{_CADDY_APP_NAME}-api", f"app-{_CADDY_APP_NAME}-frontend"],
+        lambda: _caddy_register_dev(backend_port, frontend_port),
+    )
     print("[main] Dev servers ready.")
     print(f"       http://{_CADDY_APP_NAME}.localhost  (via Caddy)")
     print(f"       http://127.0.0.1:{frontend_port}  (Vite direct)")  # ai: claude-opus-5-5 | 2026-09-28
