@@ -3,8 +3,12 @@
 CostcoPrices launcher.
 
 Usage:
-  python main.py          — build frontend if stale, serve at http://costcoprices.localhost
-  python main.py --dev    — Vite :5173 + uvicorn :8000 with hot-reload, same Caddy URL
+  python main.py          — build frontend if stale, serve at http://costco.localhost
+  python main.py --dev    — Vite + uvicorn with hot-reload, same Caddy URL
+
+Ports are OS-assigned on every launch so this app never collides with other
+local apps; http://costco.localhost (via the shared ../infra Caddy) is the
+stable address. The direct ports are printed at startup.
 """
 import argparse
 import os
@@ -24,6 +28,13 @@ BACKEND_DIR = ROOT / "backend"
 
 # Always use the backend venv's Python so all app deps (uvicorn, etc.) are available.
 _IS_WINDOWS = platform.system() == "Windows"
+
+# ai: claude-opus-5-5 | 2026-09-28
+# Status lines use non-ASCII (→, …). When stdout is redirected to a file or pipe on
+# Windows, Python falls back to cp1252, which can't encode →, and the resulting
+# UnicodeEncodeError kills the launcher without running _shutdown (orphaning uvicorn).
+sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 _BACKEND_PYTHON = (
     BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
     if _IS_WINDOWS
@@ -61,7 +72,7 @@ def _parse_env() -> dict[str, str]:
 
 
 _ENV = _parse_env()
-_CADDY_APP_NAME = _ENV.get("CADDY_APP_NAME", "costcoprices")
+_CADDY_APP_NAME = _ENV.get("CADDY_APP_NAME", "costco")  # ai: claude-opus-5-5 | 2026-09-28
 
 # Shared dev Caddy registration client — lives in the sibling ../infra repo so
 # admin-API port discovery is centralized instead of hardcoded per project.
@@ -160,9 +171,26 @@ def _build_frontend() -> None:
 
 # ── port helpers ──────────────────────────────────────────────────────────────
 
-def _wait_for_port(port: int, timeout: int = 30) -> bool:
+# ai: claude-opus-5-5 | 2026-09-28
+def _free_port() -> int:
+    """Ask the OS for an unused TCP port.
+
+    There's a small window between releasing this socket and the child server
+    binding it; if another process grabs it first, the child fails to bind and
+    exits, which _wait_for_port / the dev-mode liveness loop report loudly.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("0.0.0.0", 0))
+        return sock.getsockname()[1]
+
+
+# ai: claude-opus-5-5 | 2026-09-28
+def _wait_for_port(port: int, proc: subprocess.Popen, timeout: int = 30) -> bool:  # type: ignore[type-arg]
+    """True once port accepts connections; False on timeout or if proc exits first."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=1):
                 return True
@@ -244,7 +272,7 @@ def _start_prod() -> None:
     else:
         print("[main] Frontend is up to date, skipping build.")
 
-    port = int(os.environ.get("PORT", _ENV.get("PORT", "8000")))
+    port = _free_port()  # ai: claude-opus-5-5 | 2026-09-28
     print(f"[main] Starting uvicorn on :{port}…")
     proc = _run(
         [
@@ -257,7 +285,7 @@ def _start_prod() -> None:
     )
 
     print(f"[main] Waiting for backend on :{port}…")
-    if not _wait_for_port(port):
+    if not _wait_for_port(port, proc):
         print("[main] ERROR: Backend did not start in time.", file=sys.stderr)
         _shutdown(0, None)
 
@@ -270,12 +298,13 @@ def _start_prod() -> None:
 
 def _start_dev() -> None:
     _ensure_node_modules()
-    backend_port = int(os.environ.get("PORT", _ENV.get("PORT", "8000")))
-    frontend_port = 5173
+    # ai: claude-opus-5-5 | 2026-09-28
+    backend_port = _free_port()
+    frontend_port = _free_port()
 
     print(f"[main] Starting uvicorn on :{backend_port} and Vite on :{frontend_port}…")
 
-    _run(
+    backend_proc = _run(
         [
             _backend_python(), "-m", "uvicorn",
             "app.main:app",
@@ -286,23 +315,33 @@ def _start_dev() -> None:
         ],
         cwd=BACKEND_DIR,
     )
-    _run([_NPM, "run", "dev"], cwd=FRONTEND_DIR)
+    # ai: claude-opus-5-5 | 2026-09-28
+    # --strictPort makes Vite fail instead of silently hopping to another port,
+    # which would leave the Caddy route pointing at the wrong one.
+    # --host 127.0.0.1: Vite's default "localhost" resolves to IPv6 ::1 on Windows,
+    # which _wait_for_port (IPv4) never sees, so startup timed out.
+    # COSTCO_API_PORT is how vite.config.ts learns where to proxy /api.
+    vite_proc = _run(
+        [_NPM, "run", "dev", "--", "--host", "127.0.0.1", "--port", str(frontend_port), "--strictPort"],
+        cwd=FRONTEND_DIR,
+        env={**os.environ, "COSTCO_API_PORT": str(backend_port)},
+    )
 
     print("[main] Waiting for backend…")
-    if not _wait_for_port(backend_port):
+    if not _wait_for_port(backend_port, backend_proc):
         print("[main] ERROR: Backend did not start in time.", file=sys.stderr)
         _shutdown(0, None)
 
     print("[main] Waiting for Vite…")
-    if not _wait_for_port(frontend_port):
+    if not _wait_for_port(frontend_port, vite_proc):
         print("[main] ERROR: Vite did not start in time.", file=sys.stderr)
         _shutdown(0, None)
 
     _caddy_register_dev(backend_port, frontend_port)
     print("[main] Dev servers ready.")
     print(f"       http://{_CADDY_APP_NAME}.localhost  (via Caddy)")
-    print(f"       http://localhost:{frontend_port}       (Vite direct)")
-    print(f"       http://localhost:{backend_port}        (API direct)")
+    print(f"       http://127.0.0.1:{frontend_port}  (Vite direct)")  # ai: claude-opus-5-5 | 2026-09-28
+    print(f"       http://127.0.0.1:{backend_port}  (API direct)")
     print("       Press Ctrl-C to stop.")
 
     try:

@@ -7,24 +7,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 _ENV_EXAMPLE = Path(__file__).resolve().parent.parent / ".env.example"
 
-_ENV_TEMPLATE = """\
-# Anthropic API key — required for receipt image OCR
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-
-# SQLite database file path (relative to backend/)
-DATABASE_URL=sqlite:///./costco_prices.db
-
-# CORS origins for the frontend (comma-separated)
-CORS_ORIGINS=http://localhost:5173,http://localhost:8000
-
-# App port
-PORT=8000
-"""
-
 
 def _ensure_env_file() -> None:
     if not _ENV_FILE.exists():
-        _ENV_FILE.write_text(_ENV_TEMPLATE, encoding="utf-8")
+        _ENV_FILE.write_text(_ENV_EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")  # ai: claude-opus-5-5 | 2026-09-28
         print(
             f"[config] No .env found — created a template at {_ENV_FILE}\n"
             "         Fill in ANTHROPIC_API_KEY and restart.",
@@ -41,8 +27,7 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str
     database_url: str = "sqlite:///./costco_prices.db"
-    cors_origins: str = "http://localhost:5173,http://localhost:8000"
-    port: int = 8000
+    cors_origins: str = "http://costco.localhost"  # ai: claude-opus-5-5 | 2026-09-28
 
 
 settings = Settings()
