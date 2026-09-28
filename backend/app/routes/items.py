@@ -1,5 +1,6 @@
 # ai: claude-sonnet-4-6 | 2026-06-18
 import logging
+from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/items", tags=["items"])
 
 
-def _build_item_out(item: Item, latest_price: Decimal | None) -> ItemOut:
+# ai: claude-opus-5-5 | 2026-09-28
+def _build_item_out(item: Item, latest_price: Decimal | None, last_purchased: date | None) -> ItemOut:
     return ItemOut(
         id=item.id,
         item_code=item.item_code,
@@ -26,7 +28,27 @@ def _build_item_out(item: Item, latest_price: Decimal | None) -> ItemOut:
         created_at=item.created_at,
         updated_at=item.updated_at,
         latest_price=latest_price,
+        last_purchased=last_purchased,
     )
+
+
+# ai: claude-opus-5-5 | 2026-09-28
+def _last_purchased_dates(db: Session, item_id: int | None = None) -> dict[int, date]:
+    """Map item_id → most recent receipt shopping_date the item was bought on.
+
+    Coupon lines are excluded: they're discounts applied to a purchase, not a
+    purchase themselves. Pass item_id to limit the query to one item; omit it to
+    get every item in a single grouped query.
+    """
+    stmt = (
+        select(PriceHistory.item_id, func.max(Receipt.shopping_date))
+        .join(Receipt, PriceHistory.receipt_id == Receipt.id)
+        .where(PriceHistory.is_coupon.is_(False))
+        .group_by(PriceHistory.item_id)
+    )
+    if item_id is not None:
+        stmt = stmt.where(PriceHistory.item_id == item_id)
+    return {row_item_id: shopping_date for row_item_id, shopping_date in db.execute(stmt).all()}
 
 
 @router.get("", response_model=list[ItemOut], status_code=status.HTTP_200_OK)
@@ -34,6 +56,7 @@ async def list_items(db: Session = Depends(get_db)) -> list[ItemOut]:
     items = db.execute(
         select(Item).order_by(func.coalesce(Item.friendly_name, Item.description))
     ).scalars().all()
+    last_purchased = _last_purchased_dates(db)  # ai: claude-opus-5-5 | 2026-09-28
 
     results = []
     for item in items:
@@ -50,7 +73,7 @@ async def list_items(db: Session = Depends(get_db)) -> list[ItemOut]:
             .scalars()
             .first()
         )
-        results.append(_build_item_out(item, latest))
+        results.append(_build_item_out(item, latest, last_purchased.get(item.id)))  # ai: claude-opus-5-5 | 2026-09-28
     return results
 
 
@@ -95,6 +118,7 @@ async def get_item(item_id: int, db: Session = Depends(get_db)) -> ItemDetailOut
         created_at=item.created_at,
         updated_at=item.updated_at,
         latest_price=latest,
+        last_purchased=_last_purchased_dates(db, item_id).get(item_id),  # ai: claude-opus-5-5 | 2026-09-28
         price_history=history_out,
     )
 
@@ -156,4 +180,4 @@ async def update_item(
         .scalars()
         .first()
     )
-    return _build_item_out(item, latest)
+    return _build_item_out(item, latest, _last_purchased_dates(db, item.id).get(item.id))  # ai: claude-opus-5-5 | 2026-09-28

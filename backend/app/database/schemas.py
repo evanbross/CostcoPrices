@@ -52,6 +52,7 @@ class ItemOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     latest_price: Decimal | None = None
+    last_purchased: date | None = None  # ai: claude-opus-5-5 | 2026-09-28
 
 
 class ItemDetailOut(ItemOut):

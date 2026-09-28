@@ -21,6 +21,7 @@ export interface Item {
   created_at: string
   updated_at: string
   latest_price: string | null
+  last_purchased: string | null // ai: claude-opus-5-5 | 2026-09-28 — YYYY-MM-DD receipt date
 }
 
 export interface ItemDetail extends Item {

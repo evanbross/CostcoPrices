@@ -203,6 +203,8 @@ export default function Items() {
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Name</th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Receipt description</th>
                 <th className="text-center px-4 py-3 font-semibold text-gray-600 w-16">Tax</th>
+                {/* ai: claude-opus-5-5 | 2026-09-28 */}
+                <th className="text-right px-4 py-3 font-semibold text-gray-600 w-32">Last Purchased</th>
                 <th className="text-right px-4 py-3 font-semibold text-gray-600 w-28">Latest Price</th>
               </tr>
             </thead>
@@ -250,6 +252,10 @@ export default function Items() {
                     </td>
                     <td className="px-4 py-3 text-center text-xs text-gray-500">
                       {item.tax_type ?? '—'}
+                    </td>
+                    {/* ai: claude-opus-5-5 | 2026-09-28 */}
+                    <td className="px-4 py-3 text-right text-gray-600 whitespace-nowrap">
+                      {item.last_purchased ?? '—'}
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-semibold text-gray-800">
                       {fmt(item.latest_price)}
