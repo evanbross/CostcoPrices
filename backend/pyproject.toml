@@ -26,3 +26,9 @@ dev = [
 
 [tool.uv]
 link-mode = "symlink"
+
+# ai: claude-opus-5-5 | 2026-09-28
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+norecursedirs = [".venv", "alembic", "__pycache__"]
