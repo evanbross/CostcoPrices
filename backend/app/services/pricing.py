@@ -31,7 +31,7 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import PriceHistory, Receipt
 
@@ -45,7 +45,7 @@ class LatestPurchase:
     shopping_date: date
 
 
-def latest_purchases(db: Session, item_ids: list[int] | None = None) -> dict[int, LatestPurchase]:
+async def latest_purchases(db: AsyncSession, item_ids: list[int] | None = None) -> dict[int, LatestPurchase]:
     """Map item_id → its most recent non-coupon purchase.
 
     One query regardless of how many items: a window function ranks each item's
@@ -69,9 +69,11 @@ def latest_purchases(db: Session, item_ids: list[int] | None = None) -> dict[int
         ranked_stmt = ranked_stmt.where(PriceHistory.item_id.in_(item_ids))
     ranked = ranked_stmt.subquery()
 
-    rows = db.execute(
-        select(ranked.c.item_id, ranked.c.price, ranked.c.price_per_lb, ranked.c.shopping_date)
-        .where(ranked.c.rank == 1)
+    rows = (
+        await db.execute(
+            select(ranked.c.item_id, ranked.c.price, ranked.c.price_per_lb, ranked.c.shopping_date)
+            .where(ranked.c.rank == 1)
+        )
     ).all()
     return {
         item_id: LatestPurchase(price=price, price_per_lb=price_per_lb, shopping_date=shopping_date)
@@ -79,7 +81,7 @@ def latest_purchases(db: Session, item_ids: list[int] | None = None) -> dict[int
     }
 
 
-def price_before_receipt(db: Session, item_id: int, receipt: Receipt) -> Decimal | None:
+async def price_before_receipt(db: AsyncSession, item_id: int, receipt: Receipt) -> Decimal | None:
     """The item's most recent non-coupon price on a purchase that precedes `receipt`.
 
     "Precedes" uses the same (shopping_date, receipt id) ordering as
@@ -87,7 +89,7 @@ def price_before_receipt(db: Session, item_id: int, receipt: Receipt) -> Decimal
     against what the price was back then, not against a later purchase.
     """
     return (
-        db.execute(
+        await db.execute(
             select(PriceHistory.price)
             .join(Receipt, PriceHistory.receipt_id == Receipt.id)
             .where(
@@ -101,6 +103,4 @@ def price_before_receipt(db: Session, item_id: int, receipt: Receipt) -> Decimal
             .order_by(*_NEWEST_FIRST)
             .limit(1)
         )
-        .scalars()
-        .first()
-    )
+    ).scalars().first()

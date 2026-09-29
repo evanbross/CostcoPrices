@@ -78,13 +78,15 @@ Return JSON only — no markdown, no prose:
 }
 """
 
-_client: anthropic.Anthropic | None = None
+# ai: claude-opus-5-5 | 2026-09-28
+# Async client: the sync one blocked the event loop for the whole OCR call.
+_client: anthropic.AsyncAnthropic | None = None
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     return _client
 
 
@@ -120,7 +122,7 @@ async def parse_receipt_images(images: list[tuple[bytes, str]]) -> OcrResponse:
         sum(len(b) for b, _ in images),
     )
 
-    message = client.messages.create(
+    message = await client.messages.create(  # ai: claude-opus-5-5 | 2026-09-28
         model="claude-haiku-4-5-20251001",
         max_tokens=4096,
         system=_SYSTEM_PROMPT,

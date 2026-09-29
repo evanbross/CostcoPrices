@@ -3,7 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_db
 from app.database.schemas import ItemDetailOut, ItemOut, ItemUpdate, PriceHistoryOut, PriceHistoryUpdate
@@ -32,30 +32,29 @@ def _build_item_out(item: Item, latest: LatestPurchase | None) -> ItemOut:
 
 
 @router.get("", response_model=list[ItemOut], status_code=status.HTTP_200_OK)
-async def list_items(db: Session = Depends(get_db)) -> list[ItemOut]:
-    items = db.execute(
+async def list_items(db: AsyncSession = Depends(get_db)) -> list[ItemOut]:  # ai: claude-opus-5-5 | 2026-09-28 — async session
+    items = (await db.execute(
         select(Item).order_by(func.coalesce(Item.friendly_name, Item.description))
-    ).scalars().all()
+    )).scalars().all()
     # ai: claude-opus-5-5 | 2026-09-28
-    latest = latest_purchases(db)
+    latest = await latest_purchases(db)
     return [_build_item_out(item, latest.get(item.id)) for item in items]
 
 
 @router.get("/{item_id}", response_model=ItemDetailOut, status_code=status.HTTP_200_OK)
-async def get_item(item_id: int, db: Session = Depends(get_db)) -> ItemDetailOut:
-    item = db.execute(select(Item).where(Item.id == item_id)).scalars().first()
+async def get_item(item_id: int, db: AsyncSession = Depends(get_db)) -> ItemDetailOut:  # ai: claude-opus-5-5 | 2026-09-28 — async session
+    item = (await db.execute(select(Item).where(Item.id == item_id))).scalars().first()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
     history_rows = (
-        db.execute(
+        await db.execute(
             select(PriceHistory, Receipt.shopping_date)
             .join(Receipt, PriceHistory.receipt_id == Receipt.id)
             .where(PriceHistory.item_id == item_id)
             .order_by(Receipt.shopping_date.asc(), Receipt.id.asc(), PriceHistory.id.asc())  # ai: claude-opus-5-5 | 2026-09-28
         )
-        .all()
-    )
+    ).all()
 
     history_out = [
         PriceHistoryOut(
@@ -73,26 +72,26 @@ async def get_item(item_id: int, db: Session = Depends(get_db)) -> ItemDetailOut
 
     # ai: claude-opus-5-5 | 2026-09-28
     # The last history row can be a coupon, so don't read "latest" off it.
-    item_out = _build_item_out(item, latest_purchases(db, [item_id]).get(item_id))
+    item_out = _build_item_out(item, (await latest_purchases(db, [item_id])).get(item_id))
     return ItemDetailOut(**item_out.model_dump(), price_history=history_out)
 
 
 @router.patch("/history/{entry_id}", response_model=PriceHistoryOut, status_code=status.HTTP_200_OK)
 async def update_price_history_entry(
-    entry_id: int, payload: PriceHistoryUpdate, db: Session = Depends(get_db)
+    entry_id: int, payload: PriceHistoryUpdate, db: AsyncSession = Depends(get_db)  # ai: claude-opus-5-5 | 2026-09-28 — async session
 ) -> PriceHistoryOut:
     """Set or clear price_per_lb on a price history entry (for by-weight items)."""
-    ph = db.execute(select(PriceHistory).where(PriceHistory.id == entry_id)).scalars().first()
+    ph = (await db.execute(select(PriceHistory).where(PriceHistory.id == entry_id))).scalars().first()
     if ph is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Price history entry not found")
 
     ph.price_per_lb = payload.price_per_lb
-    db.commit()
-    db.refresh(ph)
+    await db.commit()
+    await db.refresh(ph)
 
-    shopping_date = db.execute(
+    shopping_date = (await db.execute(
         select(Receipt.shopping_date).where(Receipt.id == ph.receipt_id)
-    ).scalar_one_or_none()
+    )).scalar_one_or_none()
 
     return PriceHistoryOut(
         id=ph.id,
@@ -108,9 +107,9 @@ async def update_price_history_entry(
 
 @router.patch("/{item_id}", response_model=ItemOut, status_code=status.HTTP_200_OK)
 async def update_item(
-    item_id: int, payload: ItemUpdate, db: Session = Depends(get_db)
+    item_id: int, payload: ItemUpdate, db: AsyncSession = Depends(get_db)  # ai: claude-opus-5-5 | 2026-09-28 — async session
 ) -> ItemOut:
-    item = db.execute(select(Item).where(Item.id == item_id)).scalars().first()
+    item = (await db.execute(select(Item).where(Item.id == item_id))).scalars().first()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
@@ -121,7 +120,7 @@ async def update_item(
     if payload.is_by_weight is not None:
         item.is_by_weight = payload.is_by_weight
 
-    db.commit()
-    db.refresh(item)
+    await db.commit()
+    await db.refresh(item)
 
-    return _build_item_out(item, latest_purchases(db, [item.id]).get(item.id))  # ai: claude-opus-5-5 | 2026-09-28
+    return _build_item_out(item, (await latest_purchases(db, [item.id])).get(item.id))  # ai: claude-opus-5-5 | 2026-09-28

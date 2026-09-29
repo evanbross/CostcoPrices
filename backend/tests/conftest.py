@@ -15,23 +15,25 @@
 # =============================================================================
 # ai: claude-opus-5-5 | 2026-09-28
 """Shared fixtures: a fresh in-memory SQLite schema per test (a real DB, not a mock)."""
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 import app.models.models  # noqa: F401 — registers every table on Base.metadata
 from app.database.database import Base
 
 
 @pytest.fixture
-def db() -> Generator[Session, None, None]:
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine, autoflush=False)()
+async def db() -> AsyncGenerator[AsyncSession, None]:
+    # StaticPool: an in-memory SQLite DB lives only as long as its connection, so
+    # every session in the test must share that one connection.
+    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     try:
-        yield session
+        async with async_sessionmaker(engine, autoflush=False, expire_on_commit=False)() as session:
+            yield session
     finally:
-        session.close()
-        engine.dispose()
+        await engine.dispose()

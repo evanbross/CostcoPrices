@@ -3,7 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_db
 from app.database.schemas import ImportReport, ImportReportItem, PriceChange
@@ -21,21 +21,20 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
     status_code=status.HTTP_200_OK,
 )
 async def receipt_import_report(
-    receipt_id: int, db: Session = Depends(get_db)
+    receipt_id: int, db: AsyncSession = Depends(get_db)  # ai: claude-opus-5-5 | 2026-09-28 — async session
 ) -> ImportReport:
     """Return a comparison report for a specific receipt vs. prior price history."""
-    receipt = db.execute(select(Receipt).where(Receipt.id == receipt_id)).scalars().first()
+    receipt = (await db.execute(select(Receipt).where(Receipt.id == receipt_id))).scalars().first()
     if receipt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
 
     rows = (
-        db.execute(
+        await db.execute(
             select(PriceHistory, Item)
             .join(Item, PriceHistory.item_id == Item.id)
             .where(PriceHistory.receipt_id == receipt_id)
         )
-        .all()
-    )
+    ).all()
 
     new_items: list[ImportReportItem] = []
     price_changes: list[PriceChange] = []
@@ -58,7 +57,7 @@ async def receipt_import_report(
         # ai: claude-opus-5-5 | 2026-09-28
         # Compare against the purchase before this receipt's shopping date, not the
         # last-imported one (which can be a later trip if receipts arrive out of order).
-        prev = price_before_receipt(db, item.id, receipt)
+        prev = await price_before_receipt(db, item.id, receipt)
 
         if prev is None:
             new_items.append(report_item)

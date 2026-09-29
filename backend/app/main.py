@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
-def _check_database() -> None:
+# ai: claude-opus-5-5 | 2026-09-28
+async def _check_database() -> None:
     try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
         logger.info("Database reachable.")
     except Exception as exc:
         raise RuntimeError(f"Database health check failed: {exc}") from exc
@@ -36,9 +37,11 @@ def _check_database() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up — initialising database...")
-    Base.metadata.create_all(bind=engine)
+    # ai: claude-opus-5-5 | 2026-09-28
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     try:
-        _check_database()
+        await _check_database()
     except RuntimeError as exc:
         logger.critical("Startup check failed: %s", exc)
         sys.exit(1)

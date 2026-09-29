@@ -1,10 +1,11 @@
 # ai: claude-sonnet-4-6 | 2026-06-19
+import asyncio
 import logging
 
 import fitz  # pymupdf
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_db
 from app.database.schemas import (
@@ -35,14 +36,14 @@ _PDF_CONTENT_TYPES = {"application/pdf"}
 _PDF_RENDER_DPI = 150  # good balance of quality vs. payload size
 
 
+# ai: claude-opus-5-5 | 2026-09-28
 def _pdf_to_png_pages(pdf_bytes: bytes) -> list[bytes]:
-    """Render each page of a PDF to a PNG byte string."""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages: list[bytes] = []
-    for page in doc:
-        pix = page.get_pixmap(dpi=_PDF_RENDER_DPI)
-        pages.append(pix.tobytes("png"))
-    return pages
+    """Render each page of a PDF to a PNG byte string.
+
+    CPU-bound and synchronous: call it via asyncio.to_thread from async code.
+    """
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        return [page.get_pixmap(dpi=_PDF_RENDER_DPI).tobytes("png") for page in doc]
 
 
 @router.post("/upload", response_model=OcrResponse, status_code=status.HTTP_200_OK)
@@ -70,7 +71,7 @@ async def upload_receipt(image: UploadFile = File(...)) -> OcrResponse:
 
     try:
         if is_pdf:
-            png_pages = _pdf_to_png_pages(file_bytes)
+            png_pages = await asyncio.to_thread(_pdf_to_png_pages, file_bytes)  # ai: claude-opus-5-5 | 2026-09-28 — keep the event loop free
             if not png_pages:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -89,7 +90,7 @@ async def upload_receipt(image: UploadFile = File(...)) -> OcrResponse:
 
 @router.post("/confirm", response_model=ImportReport, status_code=status.HTTP_201_CREATED)
 async def confirm_receipt(
-    payload: ReceiptConfirmRequest, db: Session = Depends(get_db)
+    payload: ReceiptConfirmRequest, db: AsyncSession = Depends(get_db)  # ai: claude-opus-5-5 | 2026-09-28 — async session
 ) -> ImportReport:
     """Save confirmed receipt line items and return an import report."""
     if not payload.lines:
@@ -100,9 +101,9 @@ async def confirm_receipt(
 
     # Duplicate barcode check — reject before touching any data
     if payload.barcode:
-        existing = db.execute(
+        existing = (await db.execute(
             select(Receipt).where(Receipt.barcode == payload.barcode)
-        ).scalars().first()
+        )).scalars().first()
         if existing is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -110,7 +111,7 @@ async def confirm_receipt(
             )
 
     try:
-        report = receipt_service.confirm_receipt(
+        report = await receipt_service.confirm_receipt(
             db=db,
             shopping_date=payload.shopping_date,
             store_location=payload.store_location,
@@ -118,9 +119,9 @@ async def confirm_receipt(
             barcode=payload.barcode,
             lines=payload.lines,
         )
-        db.commit()
+        await db.commit()
     except Exception as exc:
-        db.rollback()
+        await db.rollback()
         logger.error("confirm_receipt failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -131,49 +132,50 @@ async def confirm_receipt(
 
 
 @router.get("", response_model=list[ReceiptOut], status_code=status.HTTP_200_OK)
-async def list_receipts(db: Session = Depends(get_db)) -> list[ReceiptOut]:
-    receipts = (
-        db.execute(select(Receipt).order_by(Receipt.shopping_date.desc()))
-        .scalars()
-        .all()
+async def list_receipts(db: AsyncSession = Depends(get_db)) -> list[ReceiptOut]:  # ai: claude-opus-5-5 | 2026-09-28 — async session
+    # ai: claude-opus-5-5 | 2026-09-28
+    # One grouped query for every receipt's line count instead of one count query per receipt.
+    line_counts = (
+        select(PriceHistory.receipt_id, func.count().label("line_count"))
+        .group_by(PriceHistory.receipt_id)
+        .subquery()
     )
-
-    result = []
-    for r in receipts:
-        count = db.execute(
-            select(func.count()).select_from(
-                select(PriceHistory.id).where(PriceHistory.receipt_id == r.id).subquery()
-            )
-        ).scalar_one()
-        result.append(
-            ReceiptOut(
-                id=r.id,
-                barcode=r.barcode,
-                shopping_date=r.shopping_date,
-                store_location=r.store_location,
-                notes=r.notes,
-                created_at=r.created_at,
-                line_count=count,
-            )
+    rows = (
+        await db.execute(
+            select(Receipt, func.coalesce(line_counts.c.line_count, 0))
+            .outerjoin(line_counts, line_counts.c.receipt_id == Receipt.id)
+            .order_by(Receipt.shopping_date.desc())
         )
-    return result
+    ).all()
+
+    return [
+        ReceiptOut(
+            id=r.id,
+            barcode=r.barcode,
+            shopping_date=r.shopping_date,
+            store_location=r.store_location,
+            notes=r.notes,
+            created_at=r.created_at,
+            line_count=count,
+        )
+        for r, count in rows
+    ]
 
 
 @router.get("/{receipt_id}", response_model=ReceiptDetailOut, status_code=status.HTTP_200_OK)
-async def get_receipt(receipt_id: int, db: Session = Depends(get_db)) -> ReceiptDetailOut:
-    receipt = db.execute(select(Receipt).where(Receipt.id == receipt_id)).scalars().first()
+async def get_receipt(receipt_id: int, db: AsyncSession = Depends(get_db)) -> ReceiptDetailOut:  # ai: claude-opus-5-5 | 2026-09-28 — async session
+    receipt = (await db.execute(select(Receipt).where(Receipt.id == receipt_id))).scalars().first()
     if receipt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
 
     rows = (
-        db.execute(
+        await db.execute(
             select(PriceHistory, Item)
             .join(Item, PriceHistory.item_id == Item.id)
             .where(PriceHistory.receipt_id == receipt_id)
             .order_by(PriceHistory.id)
         )
-        .all()
-    )
+    ).all()
 
     lines = [
         ReceiptLineOut(

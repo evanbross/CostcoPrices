@@ -3,7 +3,7 @@ import logging
 from datetime import date
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.schemas import (
     ImportReport,
@@ -17,8 +17,8 @@ from app.services.pricing import price_before_receipt
 logger = logging.getLogger(__name__)
 
 
-def confirm_receipt(
-    db: Session,
+async def confirm_receipt(  # ai: claude-opus-5-5 | 2026-09-28 — async session
+    db: AsyncSession,
     shopping_date: date,
     store_location: str | None,
     notes: str | None,
@@ -36,7 +36,7 @@ def confirm_receipt(
         barcode=barcode or None,
     )
     db.add(receipt)
-    db.flush()  # populate receipt.id without committing
+    await db.flush()  # populate receipt.id without committing
 
     new_items: list[ImportReportItem] = []
     price_changes: list[PriceChange] = []
@@ -62,9 +62,9 @@ def confirm_receipt(
         if line.is_coupon:
             continue  # process coupons in second pass
 
-        existing = db.execute(
+        existing = (await db.execute(
             select(Item).where(Item.item_code == line.item_code)
-        ).scalars().first()
+        )).scalars().first()
 
         if existing is None:
             item = Item(
@@ -73,7 +73,7 @@ def confirm_receipt(
                 tax_type=line.tax_type,
             )
             db.add(item)
-            db.flush()
+            await db.flush()
             is_new = True
         else:
             item = existing
@@ -85,7 +85,7 @@ def confirm_receipt(
 
         item_code_to_id[line.item_code] = item.id
 
-        old_price = None if is_new else price_before_receipt(db, item.id, receipt)  # ai: claude-opus-5-5 | 2026-09-28
+        old_price = None if is_new else await price_before_receipt(db, item.id, receipt)  # ai: claude-opus-5-5 | 2026-09-28
 
         ph = PriceHistory(
             item_id=item.id,
@@ -129,9 +129,9 @@ def confirm_receipt(
         if not line.is_coupon:
             continue
 
-        coupon_item = db.execute(
+        coupon_item = (await db.execute(
             select(Item).where(Item.item_code == line.item_code)
-        ).scalars().first()
+        )).scalars().first()
 
         if coupon_item is None:
             coupon_item = Item(
@@ -140,7 +140,7 @@ def confirm_receipt(
                 tax_type=line.tax_type,
             )
             db.add(coupon_item)
-            db.flush()
+            await db.flush()
 
         coupon_for_id = (
             item_code_to_id.get(line.coupon_for_code)
@@ -154,7 +154,7 @@ def confirm_receipt(
 
         # Auto-set friendly_name on new coupon items (don't overwrite if already set)
         if coupon_item.friendly_name is None and coupon_for_id is not None:
-            parent = db.execute(select(Item).where(Item.id == coupon_for_id)).scalars().first()
+            parent = (await db.execute(select(Item).where(Item.id == coupon_for_id))).scalars().first()
             if parent:
                 coupon_item.friendly_name = f"Coupon for {parent.friendly_name or parent.description}"
 
