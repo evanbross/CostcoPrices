@@ -4,15 +4,16 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.config import settings
 from app.database.database import Base, engine
 from app.routes import items, receipts, reports, shopping_lists
+from app.services.errors import ConflictError, NotFoundError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,6 +64,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ai: claude-opus-5-5 | 2026-09-29
+# Services raise domain errors; this is the one place they become HTTP statuses.
+@app.exception_handler(NotFoundError)
+async def _not_found(_request: Request, exc: NotFoundError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
+
+
+@app.exception_handler(ConflictError)
+async def _conflict(_request: Request, exc: ConflictError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
 
 app.include_router(items.router)
 app.include_router(receipts.router)

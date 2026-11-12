@@ -1,5 +1,5 @@
 // ai: claude-sonnet-4-6 | 2026-06-18
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { updateItem } from '../api/client'
@@ -15,21 +15,23 @@ export default function EditItemDialog({ item, onClose, onSaved }: Props) {
   const [friendlyName, setFriendlyName] = useState(item.friendly_name ?? '')
   const [taxType, setTaxType] = useState(item.tax_type ?? '')
   const [isByWeight, setIsByWeight] = useState(item.is_by_weight)
+  const [latestPrice, setLatestPrice] = useState(item.latest_price ?? '')
   const [saving, setSaving] = useState(false)
-  const initialized = useRef(false)
-
-  // Guard double-fire in StrictMode
-  if (!initialized.current) {
-    initialized.current = true
-  }
 
   async function handleSave() {
+    const parsedPrice = Number(latestPrice)
+    if (latestPrice && (!Number.isFinite(parsedPrice) || parsedPrice <= 0)) {
+      toast.error('Latest price must be greater than zero')
+      return
+    }
+
     setSaving(true)
     try {
       const updated = await updateItem(item.id, {
         friendly_name: friendlyName.trim() || null,
         tax_type: taxType.trim() || null,
         is_by_weight: isByWeight,
+        ...(latestPrice ? { latest_price: parsedPrice.toFixed(2) } : {}),
       })
       onSaved(updated)
       toast.success('Item updated')
@@ -67,6 +69,27 @@ export default function EditItemDialog({ item, onClose, onSaved }: Props) {
               value={friendlyName}
               onChange={(e) => setFriendlyName(e.target.value)}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Latest price
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+              <input
+                className="input pl-7"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={latestPrice}
+                onChange={(e) => setLatestPrice(e.target.value)}
+                placeholder="Enter a price"
+              />
+            </div>
+            {item.latest_price === null && (
+              <p className="mt-1 text-xs text-gray-400">This will be saved as the item&rsquo;s manual price.</p>
+            )}
           </div>
 
           <div>

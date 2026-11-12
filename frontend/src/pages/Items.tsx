@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Check, Pencil, Search, ShoppingCart } from 'lucide-react'
+import { Check, Pencil, Plus, Search, ShoppingCart } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
   addShoppingListItem,
@@ -13,6 +13,7 @@ import {
   removeShoppingListItem,
 } from '../api/client'
 import EditItemDialog from '../components/EditItemDialog'
+import CreateItemDialog from '../components/CreateItemDialog'
 import type { Item } from '../types'
 
 function fmt(price: string | null) {
@@ -30,6 +31,7 @@ export default function Items() {
 
   const [search, setSearch] = useState('')
   const [editingItem, setEditingItem] = useState<Item | null>(null)
+  const [creatingItem, setCreatingItem] = useState(false)
   const [selectedListId, setSelectedListId] = useState<number | null>(null)
   const [creatingList, setCreatingList] = useState(false)
   const [newListName, setNewListName] = useState('')
@@ -61,6 +63,15 @@ export default function Items() {
   function handleSaved(updated: Item) {
     queryClient.setQueryData<Item[]>(['items'], (old = []) =>
       old.map((i) => (i.id === updated.id ? updated : i)),
+    )
+  }
+
+  // ai: gpt-5 | 2026-11-03
+  function handleCreated(created: Item) {
+    queryClient.setQueryData<Item[]>(['items'], (old = []) =>
+      [...old, created].sort((a, b) =>
+        (a.friendly_name ?? a.description).localeCompare(b.friendly_name ?? b.description),
+      ),
     )
   }
 
@@ -121,6 +132,11 @@ export default function Items() {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          <button className="btn-primary flex items-center gap-1.5" onClick={() => setCreatingItem(true)}>
+            <Plus className="w-4 h-4" />
+            Add Item
+          </button>
+
           {/* Shopping list selector */}
           <div className="flex items-center gap-2">
             <ShoppingCart className="w-4 h-4 text-gray-400 shrink-0" />
@@ -274,6 +290,9 @@ export default function Items() {
           onClose={() => setEditingItem(null)}
           onSaved={handleSaved}
         />
+      )}
+      {creatingItem && (
+        <CreateItemDialog onClose={() => setCreatingItem(false)} onCreated={handleCreated} />
       )}
     </div>
   )

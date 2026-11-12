@@ -26,7 +26,7 @@ from decimal import Decimal
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import PriceHistory, Receipt
+from app.models.models import Item, PriceHistory, Receipt
 
 _NEWEST_FIRST = (Receipt.shopping_date.desc(), Receipt.id.desc(), PriceHistory.id.desc())
 
@@ -35,7 +35,7 @@ _NEWEST_FIRST = (Receipt.shopping_date.desc(), Receipt.id.desc(), PriceHistory.i
 class LatestPurchase:
     price: Decimal
     price_per_lb: Decimal | None
-    shopping_date: date
+    shopping_date: date | None
 
 
 async def latest_purchases(db: AsyncSession, item_ids: list[int] | None = None) -> dict[int, LatestPurchase]:
@@ -68,10 +68,39 @@ async def latest_purchases(db: AsyncSession, item_ids: list[int] | None = None) 
             .where(ranked.c.rank == 1)
         )
     ).all()
-    return {
+    latest = {
         item_id: LatestPurchase(price=price, price_per_lb=price_per_lb, shopping_date=shopping_date)
         for item_id, price, price_per_lb, shopping_date in rows
     }
+    # ai: gpt-5 | 2026-11-03
+    manual_price_stmt = select(Item.id, Item.manual_price).where(Item.manual_price.is_not(None))
+    if item_ids is not None:
+        manual_price_stmt = manual_price_stmt.where(Item.id.in_(item_ids))
+    for item_id, manual_price in (await db.execute(manual_price_stmt)).all():
+        if item_id not in latest:
+            latest[item_id] = LatestPurchase(
+                price=manual_price,
+                price_per_lb=None,
+                shopping_date=None,
+            )
+    return latest
+
+
+# ai: gpt-5 | 2026-11-03
+async def latest_purchase_entry(db: AsyncSession, item_id: int) -> PriceHistory | None:
+    """Return the stored row that defines an item's current price."""
+    return (
+        await db.execute(
+            select(PriceHistory)
+            .join(Receipt, PriceHistory.receipt_id == Receipt.id)
+            .where(
+                PriceHistory.item_id == item_id,
+                PriceHistory.is_coupon.is_(False),
+            )
+            .order_by(*_NEWEST_FIRST)
+            .limit(1)
+        )
+    ).scalars().first()
 
 
 async def price_before_receipt(db: AsyncSession, item_id: int, receipt: Receipt) -> Decimal | None:

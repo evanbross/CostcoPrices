@@ -3,6 +3,7 @@ import axios from 'axios'
 import type {
   ImportReport,
   Item,
+  ItemCreate,
   ItemDetail,
   ItemUpdate,
   OcrResponse,
@@ -28,6 +29,12 @@ export async function getItems(): Promise<Item[]> {
 
 export async function getItem(id: number): Promise<ItemDetail> {
   const res = await api.get<ItemDetail>(`/items/${id}`)
+  return res.data
+}
+
+// ai: gpt-5 | 2026-11-03
+export async function createItem(payload: ItemCreate): Promise<Item> {
+  const res = await api.post<Item>('/items', payload)
   return res.data
 }
 

@@ -32,6 +32,16 @@ export interface ItemUpdate {
   friendly_name?: string | null
   tax_type?: string | null
   is_by_weight?: boolean
+  latest_price?: string
+}
+
+// ai: gpt-5 | 2026-11-03
+export interface ItemCreate {
+  item_code: string
+  description: string
+  friendly_name?: string | null
+  tax_type?: string | null
+  is_by_weight: boolean
 }
 
 export interface ParsedLine {

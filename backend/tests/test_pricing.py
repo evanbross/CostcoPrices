@@ -13,10 +13,10 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.schemas import ParsedLine
+from app.database.schemas import ImportReport, ParsedLine, ReceiptConfirmRequest
 from app.models.models import Item, PriceHistory, Receipt
 from app.services.pricing import latest_purchases, price_before_receipt
-from app.services.receipt_service import confirm_receipt
+from app.services.receipt_service import ReceiptService
 
 
 async def _item(db: AsyncSession, code: str) -> Item:
@@ -56,6 +56,10 @@ async def _buy(
 
 def _line(code: str, price: str) -> ParsedLine:
     return ParsedLine(item_code=code, description=f"ITEM {code}", price=Decimal(price))
+
+
+async def _confirm(db: AsyncSession, shopping_date: date, line: ParsedLine) -> ImportReport:
+    return await ReceiptService(db).confirm(ReceiptConfirmRequest(shopping_date=shopping_date, lines=[line]))
 
 
 async def test_latest_uses_shopping_date_not_import_order(db: AsyncSession) -> None:
@@ -149,10 +153,10 @@ async def test_price_before_receipt_skips_coupons(db: AsyncSession) -> None:
 
 
 async def test_confirm_old_receipt_compares_against_its_own_past(db: AsyncSession) -> None:
-    await confirm_receipt(db, date(2025, 7, 1), None, None, None, [_line("100", "3.00")])
-    await confirm_receipt(db, date(2026, 2, 1), None, None, None, [_line("100", "5.00")])
+    await _confirm(db, date(2025, 7, 1), _line("100", "3.00"))
+    await _confirm(db, date(2026, 2, 1), _line("100", "5.00"))
 
-    report = await confirm_receipt(db, date(2025, 10, 1), None, None, None, [_line("100", "4.00")])
+    report = await _confirm(db, date(2025, 10, 1), _line("100", "4.00"))
 
     assert [c.old_price for c in report.price_changes] == [Decimal("3.00")]
     assert report.price_changes[0].change == Decimal("1.00")
@@ -161,9 +165,9 @@ async def test_confirm_old_receipt_compares_against_its_own_past(db: AsyncSessio
 
 
 async def test_confirm_receipt_older_than_all_history_reports_new(db: AsyncSession) -> None:
-    await confirm_receipt(db, date(2026, 2, 1), None, None, None, [_line("100", "5.00")])
+    await _confirm(db, date(2026, 2, 1), _line("100", "5.00"))
 
-    report = await confirm_receipt(db, date(2025, 7, 1), None, None, None, [_line("100", "3.00")])
+    report = await _confirm(db, date(2025, 7, 1), _line("100", "3.00"))
 
     assert [i.item_code for i in report.new_items] == ["100"]
     assert report.price_changes == []
@@ -171,8 +175,8 @@ async def test_confirm_receipt_older_than_all_history_reports_new(db: AsyncSessi
 
 
 async def test_confirm_same_price_is_unchanged(db: AsyncSession) -> None:
-    await confirm_receipt(db, date(2026, 1, 1), None, None, None, [_line("100", "5.00")])
+    await _confirm(db, date(2026, 1, 1), _line("100", "5.00"))
 
-    report = await confirm_receipt(db, date(2026, 2, 1), None, None, None, [_line("100", "5.00")])
+    report = await _confirm(db, date(2026, 2, 1), _line("100", "5.00"))
 
     assert [i.item_code for i in report.unchanged] == ["100"]

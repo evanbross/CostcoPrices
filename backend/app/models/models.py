@@ -17,6 +17,7 @@ class Item(Base):
     friendly_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     tax_type: Mapped[str | None] = mapped_column(String(1), nullable=True)
     is_by_weight: Mapped[bool] = mapped_column(Boolean, default=False)
+    manual_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

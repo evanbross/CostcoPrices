@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -17,10 +17,35 @@ class ItemBase(BaseModel):
     is_by_weight: bool = False
 
 
+# ai: gpt-5 | 2026-11-03
+class ItemCreate(BaseModel):
+    item_code: str = Field(min_length=1, max_length=20)
+    description: str = Field(min_length=1, max_length=200)
+    friendly_name: str | None = Field(default=None, max_length=200)
+    tax_type: str | None = Field(default=None, max_length=1)
+    is_by_weight: bool = False
+
+    @field_validator("item_code", "description")
+    @classmethod
+    def reject_blank_required_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+    @field_validator("friendly_name", "tax_type")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
 class ItemUpdate(BaseModel):
     friendly_name: str | None = None
     tax_type: str | None = None
     is_by_weight: bool | None = None
+    latest_price: Decimal | None = Field(default=None, gt=0)
 
 
 class PriceHistoryOut(BaseModel):
