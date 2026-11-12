@@ -109,10 +109,13 @@ function PerLbCell({ entry, onSaved }: PerLbCellProps) {
 export default function PriceHistoryTable({ history, isWeightItem = false, onEntryUpdated }: Props) {
   const [entries, setEntries] = useState<PriceHistoryEntry[]>(history)
 
-  // Sync if parent passes new history (e.g. after refetch)
-  const prevHistory = useRef(history)
-  if (prevHistory.current !== history) {
-    prevHistory.current = history
+  // ai: claude-opus-5-5 | 2026-11-12
+  // Sync if parent passes new history (e.g. after refetch). The previous prop is
+  // kept in state, not a ref: React allows setState during render for this
+  // "adjust state on prop change" pattern, but not reading/writing refs.
+  const [prevHistory, setPrevHistory] = useState(history)
+  if (prevHistory !== history) {
+    setPrevHistory(history)
     setEntries(history)
   }
 
