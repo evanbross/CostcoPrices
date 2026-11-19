@@ -16,13 +16,12 @@ dependencies = [
     "aiofiles>=24.1.0",
     "pymupdf>=1.24.0",
     "aiosqlite>=0.22.1",
+    # Shared ZombieTech code (Caddy registration, dev-runner helpers, SMTP) from ../infra.
+    "zt-common",
 ]
 
 [dependency-groups]
 dev = [
-    # Shared dev-runner + dev-Caddy helpers from ../infra (local dev only; Docker
-    # builds and exported requirements use --no-dev, so they never need ../infra).
-    "zt-devkit",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "httpx>=0.28.0",
@@ -39,4 +38,4 @@ asyncio_mode = "auto"
 norecursedirs = [".venv", "alembic", "__pycache__"]
 
 [tool.uv.sources]
-zt-devkit = { path = "../../infra/devkit", editable = true }
+zt-common = { path = "../../infra/zt-common", editable = true }

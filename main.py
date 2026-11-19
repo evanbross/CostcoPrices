@@ -21,13 +21,13 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-# ai: claude-opus-5-5 | 2026-11-12
-# Shared dev-runner and dev-Caddy helpers: the zt-devkit package in ../infra/devkit,
-# installed into backend/.venv as an editable dev dependency by `uv sync`.
+# ai: claude-opus-5-5 | 2026-11-19
+# Shared dev-runner and Caddy helpers: the zt-common package in ../infra/zt-common,
+# a runtime dependency that `uv sync` installs into backend/.venv.
 try:
-    from zt_devkit import caddy_registry, devrun
+    from zt_common import caddy_registry, devrun
 except ImportError:
-    print("[main] ERROR: zt-devkit is not installed. Check out the infra repo at ../infra,",
+    print("[main] ERROR: zt-common is not installed. Check out the infra repo at ../infra,",
           "       then run: cd backend && uv sync  (and start main.py with backend/.venv's Python)",
           sep="\n", file=sys.stderr)
     sys.exit(1)
@@ -201,7 +201,7 @@ def _caddy_deregister() -> None:
 # ai: claude-opus-5-5 | 2026-11-12
 # Re-registers our routes if the Caddy container restarts while we run (Caddy keeps
 # routes in memory only) or if Caddy was down at startup. Shared loop from
-# zt_devkit.caddy_registry (../infra/devkit), used by every app behind the dev Caddy.
+# zt_common.caddy_registry (../infra/zt-common), used by every app behind the dev Caddy.
 _caddy_reconciler = None
 
 
